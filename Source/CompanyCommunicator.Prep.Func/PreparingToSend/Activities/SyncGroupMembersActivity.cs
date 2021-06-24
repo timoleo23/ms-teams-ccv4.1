@@ -21,7 +21,6 @@ namespace Microsoft.Teams.Apps.CompanyCommunicator.Prep.Func.PreparingToSend
     using Microsoft.Teams.Apps.CompanyCommunicator.Common.Repositories.UserData;
     using Microsoft.Teams.Apps.CompanyCommunicator.Common.Resources;
     using Microsoft.Teams.Apps.CompanyCommunicator.Common.Services.MicrosoftGraph;
-    using Microsoft.Teams.Apps.CompanyCommunicator.Common.Services.User;
     using Microsoft.Teams.Apps.CompanyCommunicator.Prep.Func.PreparingToSend.Extensions;
 
     /// <summary>
@@ -33,7 +32,6 @@ namespace Microsoft.Teams.Apps.CompanyCommunicator.Prep.Func.PreparingToSend
         private readonly INotificationDataRepository notificationDataRepository;
         private readonly ISentNotificationDataRepository sentNotificationDataRepository;
         private readonly IUserDataRepository userDataRepository;
-        private readonly IUserTypeService userTypeService;
         private readonly IStringLocalizer<Strings> localizer;
 
         /// <summary>
@@ -43,21 +41,18 @@ namespace Microsoft.Teams.Apps.CompanyCommunicator.Prep.Func.PreparingToSend
         /// <param name="notificationDataRepository">Notifications data repository.</param>
         /// <param name="groupMembersService">Group members service.</param>
         /// <param name="userDataRepository">User Data repository.</param>
-        /// <param name="userTypeService">User Type service.</param>
         /// <param name="localizer">Localization service.</param>
         public SyncGroupMembersActivity(
             ISentNotificationDataRepository sentNotificationDataRepository,
             INotificationDataRepository notificationDataRepository,
             IGroupMembersService groupMembersService,
             IUserDataRepository userDataRepository,
-            IUserTypeService userTypeService,
             IStringLocalizer<Strings> localizer)
         {
             this.groupMembersService = groupMembersService ?? throw new ArgumentNullException(nameof(groupMembersService));
             this.notificationDataRepository = notificationDataRepository ?? throw new ArgumentNullException(nameof(notificationDataRepository));
             this.sentNotificationDataRepository = sentNotificationDataRepository ?? throw new ArgumentNullException(nameof(sentNotificationDataRepository));
             this.userDataRepository = userDataRepository ?? throw new ArgumentNullException(nameof(userDataRepository));
-            this.userTypeService = userTypeService ?? throw new ArgumentNullException(nameof(userTypeService));
             this.localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
         }
 
@@ -97,11 +92,8 @@ namespace Microsoft.Teams.Apps.CompanyCommunicator.Prep.Func.PreparingToSend
                 // Convert to Recipients
                 var recipients = await this.GetRecipientsAsync(notificationId, users);
 
-                if (!recipients.IsNullOrEmpty())
-                {
-                    // Store.
-                    await this.sentNotificationDataRepository.BatchInsertOrMergeAsync(recipients);
-                }
+                // Store.
+                await this.sentNotificationDataRepository.BatchInsertOrMergeAsync(recipients);
             }
             catch (Exception ex)
             {
@@ -125,13 +117,10 @@ namespace Microsoft.Teams.Apps.CompanyCommunicator.Prep.Func.PreparingToSend
             var maxParallelism = Math.Min(100, users.Count());
             await Task.WhenAll(users.ForEachAsync(maxParallelism, async user =>
             {
-                var userEntity = await this.userDataRepository.GetAsync(UserDataTableNames.UserDataPartition, user.Id);
-
-                // This is to set the type of user(exisiting only, new ones will be skipped) to identify later if it is member or guest.
-                var userType = user.UserPrincipalName.GetUserType();
-                await this.userTypeService.UpdateUserTypeForExistingUserAsync(userEntity, userType);
-                if (userType.Equals(UserType.Member, StringComparison.OrdinalIgnoreCase))
+                // Skip Guest users.
+                if (!user.UserPrincipalName.ToLower().Contains("#ext#"))
                 {
+                    var userEntity = await this.userDataRepository.GetAsync(UserDataTableNames.UserDataPartition, user.Id);
                     if (userEntity == null)
                     {
                         userEntity = new UserDataEntity()
